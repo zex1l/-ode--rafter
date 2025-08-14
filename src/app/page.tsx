@@ -8,15 +8,14 @@ import { useState } from 'react';
 export default function Home() {
   const [promt, setPromt] = useState<string>('');
   const trpc = useTRPC();
-  const messages = useQuery(trpc.messages.getMany.queryOptions());
-  const createMessage = useMutation(trpc.messages.create.mutationOptions({}));
+  const createProject = useMutation(trpc.projects.create.mutationOptions({}));
 
   return (
     <div className="">
-      <Input onChange={(e) => setPromt(e.target.value)} placeholder='Promt'/>
-      <Button onClick={() => createMessage.mutate({ value: promt })} >Click</Button>
-
-      <div>{JSON.stringify(messages.data, null, 2)}</div>
+      <Input onChange={(e) => setPromt(e.target.value)} placeholder="Promt" />
+      <Button onClick={() => createProject.mutate({ value: promt })}>
+        Click
+      </Button>
     </div>
   );
 }
