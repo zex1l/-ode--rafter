@@ -1,19 +1,27 @@
 import {
-  AnyZodType,
   createAgent,
   createNetwork,
   createTool,
   openai,
+  Tool,
 } from '@inngest/agent-kit';
 import { inngest } from './client';
 import { Sandbox } from '@e2b/code-interpreter';
 import { getSendbox, lastAssistentTextMessageContent } from './utils';
 import { z } from 'zod';
 import { PROMPT } from '@/shared/constants/promt';
+import { prisma } from '../db';
 
-export const hello = inngest.createFunction(
-  { id: 'hello' },
-  { event: 'test/hello' },
+type AgantState = {
+  summary: string;
+  files: {
+    [path: string]: string;
+  };
+};
+
+export const codeAgent = inngest.createFunction(
+  { id: 'code-agent' },
+  { event: 'code-agent/run' },
   async ({ event, step }) => {
     //Создание песочницы
     const sanboxId = await step.run('get-sandbox-id', async () => {
@@ -25,7 +33,7 @@ export const hello = inngest.createFunction(
     });
 
     // Запуск ИИ
-    const codeWriterAgent = createAgent({
+    const codeWriterAgent = createAgent<AgantState>({
       name: 'code-agent',
       description: 'Code writer agent',
       system: PROMPT,
@@ -80,7 +88,10 @@ export const hello = inngest.createFunction(
               })
             ),
           }),
-          handler: async ({ files }, { step, network }) => {
+          handler: async (
+            { files },
+            { step, network }: Tool.Options<AgantState>
+          ) => {
             const newFiles = await step?.run(
               'createOrUpdateFiles',
               async () => {
@@ -142,7 +153,7 @@ export const hello = inngest.createFunction(
       },
     });
 
-    const network = createNetwork({
+    const network = createNetwork<AgantState>({
       name: 'coding-agent-network',
       agents: [codeWriterAgent],
       maxIter: 10,
@@ -160,12 +171,42 @@ export const hello = inngest.createFunction(
     // Получение ответа от ИИ
     const result = await network.run(event.data.value);
 
+    const isError =
+      !result.state.data.summary ||
+      Object.keys(result.state.data.files || {}).length === 0;
     // Получение ссылки на песочницу
     const sandboxUrl = await step.run('get-sandbox-url', async () => {
       const sandbox = await getSendbox(sanboxId);
       const host = sandbox.getHost(3000);
 
       return `https://${host}`;
+    });
+
+    await step.run('save-result', async () => {
+      if (isError) {
+        return await prisma.message.create({
+          data: {
+            content: 'Somthing go wrong. Please try again',
+            role: 'ASSISTANT',
+            type: 'ERROR',
+          },
+        });
+      }
+
+      return await prisma.message.create({
+        data: {
+          content: result.state.data.summary,
+          role: 'ASSISTANT',
+          type: 'RESULT',
+          Fragment: {
+            create: {
+              sandboxUrl,
+              title: 'Fragment',
+              files: result.state.data.files,
+            },
+          },
+        },
+      });
     });
 
     return {
